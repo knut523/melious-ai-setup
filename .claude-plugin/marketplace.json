@@ -1,0 +1,15 @@
+{
+  "name": "maxenergy-melious",
+  "description": "MAXENERGY team plugins: Melious sub-agents and load steering for Claude Code.",
+  "owner": {
+    "name": "MAXENERGY"
+  },
+  "plugins": [
+    {
+      "name": "melious",
+      "source": "./plugins/melious",
+      "description": "Run sub-tasks on Melious (EU models) instead of Claude, and steer load between Claude limits (via cswap) and Melious.",
+      "version": "0.1.0"
+    }
+  ]
+}

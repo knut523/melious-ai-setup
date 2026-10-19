@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# mel-sub — Sub-Agent auf Melious statt Claude.
+#   mel-sub [-m flash|glm|<modell>] [-C ordner] [-o datei] [-w] [-p | -c] "Auftrag"     (Auftrag auch auf stdin)
+#   -m  Modell: flash = glm-5.3-flash (Vorgabe), glm = glm-5.3 (hochwertig)
+#   -C  Arbeitsordner (Vorgabe: aktueller)       -o  Antwort in Datei statt auf stdout
+#   -w  Schreiben erlauben; ohne -w nur Lesen (read, agentgrep, bash)
+#   -p  nur Prompt, kein Agent (melious run; am billigsten, für Texte/Zusammenfassungen; Dateien per -f nach dem Auftrag)
+#   -c  Agent über Claude Code statt jcode (schwerer: ~300 MB je Lauf und mehr Tokens; nur wenn jcode fehlt
+#       oder Claude-Skills gebraucht werden)
+# Standard ist jcode: leicht für die Box und sparsam mit Tokens. Einrichtung einmal: mel-setup.
+# Schlüssel aus $MELIOUS_API_KEY oder ~/.melious/credentials.json (melious auth login), nur per Umgebung
+# weitergereicht, nie auf der Kommandozeile, nie ausgegeben.
+set -uo pipefail
+M=glm-5.3-flash; C="$PWD"; O=""; W=0; MODE=jcode
+while getopts "m:C:o:wpc" f; do case $f in
+  m) case $OPTARG in flash) M=glm-5.3-flash;; glm) M=glm-5.3;; *) M=$OPTARG;; esac;;
+  C) C=$OPTARG;; o) O=$OPTARG;; w) W=1;; p) MODE=prompt;; c) MODE=claude;; *) sed -n 2,13p "$0"; exit 2;; esac; done
+shift $((OPTIND-1))
+A="${1:-}"; [ $# -gt 0 ] && shift
+[ -n "$A" ] || A="$(cat)"
+[ -n "$A" ] || { sed -n 2,13p "$0"; exit 2; }
+
+K="${MELIOUS_API_KEY:-}"
+if [ -z "$K" ] && [ -f ~/.melious/credentials.json ]; then
+  K="$(python3 -c 'import json,os,re;d=json.load(open(os.path.expanduser("~/.melious/credentials.json")));m=re.search(r"sk-mel-[A-Za-z0-9_\-]+",json.dumps(d));print(m.group(0) if m else "")')"
+fi
+[ -n "$K" ] || { echo "mel-sub: kein Melious-Schlüssel. Einmal: melious auth login" >&2; exit 1; }
+
+JC="$(command -v jcode || echo "$HOME/.local/bin/jcode")"
+if [ "$MODE" = jcode ] && { [ ! -x "$JC" ] || ! grep -q '^\[providers\.melious\]' ~/.jcode/config.toml 2>/dev/null; }; then
+  echo "mel-sub: jcode fehlt oder hat kein Melious-Profil (mel-setup) — nehme Claude Code" >&2; MODE=claude
+fi
+
+case $MODE in
+  prompt)
+    command -v melious >/dev/null || PATH="$HOME/.melious/bin:$PATH"
+    R="$(cd "$C" && MELIOUS_API_KEY="$K" melious run --raw --no-stream --quiet --model "$M" "$A" "$@" < /dev/null 2>&1 | grep -vE "Update available|melious update")"; rc=$? ;;
+  jcode)
+    T=read,agentgrep,bash; [ "$W" = 1 ] && T='*'
+    J="$(cd "$C" && JCODE_PROVIDER_MELIOUS_API_KEY="$K" timeout "${MEL_SUB_TIMEOUT:-1500}" \
+         "$JC" --provider-profile melious --model "$M" --tools "$T" run --json \
+         "$A$([ "$W" = 1 ] || printf '\n\n(Nur lesen: nichts ändern, nichts installieren, keine Repo-Skripte ausführen.)')" < /dev/null 2>/dev/null)"; rc=$?
+    R="$(printf '%s' "$J" | python3 -c 'import sys,json
+try: print(json.load(sys.stdin).get("text") or "(keine Antwort)")
+except Exception: print("(jcode-Ausgabe nicht lesbar)")')" ;;
+  claude)
+    if [ "$W" = 1 ]; then TOOLS=(--permission-mode acceptEdits --allowedTools "Read,Grep,Glob,Edit,Write,Bash,WebFetch,WebSearch")
+    else TOOLS=(--allowedTools "Read,Grep,Glob,WebFetch,WebSearch,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(ls:*),Bash(rg:*)" --disallowedTools "Edit,Write,NotebookEdit"); fi
+    R="$(cd "$C" && env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY -u CLAUDECODE \
+        MEL_SUB=1 ANTHROPIC_BASE_URL="${MELIOUS_ANTHROPIC_URL:-https://api.melious.ai}" ANTHROPIC_AUTH_TOKEN="$K" \
+        ANTHROPIC_MODEL="$M" ANTHROPIC_SMALL_FAST_MODEL=glm-5.3-flash ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-5.3-flash \
+        ANTHROPIC_DEFAULT_SONNET_MODEL="$M" ANTHROPIC_DEFAULT_OPUS_MODEL="$M" CLAUDE_CODE_SUBAGENT_MODEL="$M" \
+        DISABLE_TELEMETRY=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+        timeout "${MEL_SUB_TIMEOUT:-1500}" claude -p "$A" --output-format text "${TOOLS[@]}" 2>&1)"; rc=$? ;;
+esac
+OUT="$R"$'\n\n'"— mel-sub · $M · $MODE · rc=$rc"
+if [ -n "$O" ]; then printf '%s\n' "$OUT" > "$O"; echo "→ $O"; else printf '%s\n' "$OUT"; fi
+exit $rc

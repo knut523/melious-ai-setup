@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# mel-setup — einmal je Rechner: prüft Melious-CLI und Schlüssel, richtet das Melious-Profil in jcode ein, prüft cswap.
+# Ändert nur ~/.jcode/config.toml (hängt [providers.melious] an, wenn es fehlt). Schreibt nie einen Schlüssel.
+set -uo pipefail
+ok() { printf '  ✓ %s\n' "$*"; }; no() { printf '  ✗ %s\n' "$*"; }
+M="$(command -v melious || echo "$HOME/.melious/bin/melious")"
+[ -x "$M" ] && ok "Melious-CLI: $M" || no "Melious-CLI fehlt → https://melious.ai/docs/cli"
+if [ -n "${MELIOUS_API_KEY:-}" ] || [ -f ~/.melious/credentials.json ]; then ok "Melious-Schlüssel vorhanden"
+else no "kein Schlüssel → melious auth login"; fi
+J="$(command -v jcode || echo "$HOME/.local/bin/jcode")"
+if [ -x "$J" ]; then
+  ok "jcode: $("$J" --version 2>/dev/null | head -1)"
+  mkdir -p ~/.jcode; touch ~/.jcode/config.toml
+  if grep -q '^\[providers\.melious\]' ~/.jcode/config.toml; then ok "jcode-Profil melious vorhanden"
+  else cat >> ~/.jcode/config.toml <<'EOF'
+
+[providers.melious]
+type = "open-ai-compatible"
+base_url = "https://api.melious.ai/v1"
+auth = "bearer"
+default_model = "glm-5.3-flash"
+provider_routing = false
+model_catalog = false
+
+[[providers.melious.models]]
+id = "glm-5.3-flash"
+
+[[providers.melious.models]]
+id = "glm-5.3"
+EOF
+  ok "jcode-Profil melious angelegt"; fi
+else no "jcode fehlt (mel-sub nimmt dann Claude Code, schwerer) → jcode installieren, dann mel-setup erneut"; fi
+command -v cswap >/dev/null && ok "cswap: Claude-Auslastung verfügbar" || no "cswap fehlt (optional) → uv tool install claude-swap"

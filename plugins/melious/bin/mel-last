@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""mel-last — Claude-Auslastung (aus cswap) → Empfehlung, was auf Melious laufen soll.
+
+  mel-last            Stand und Empfehlung als Text
+  mel-last --json     dasselbe maschinenlesbar
+  mel-last --hook start|prompt   für die Plugin-Hooks: start = immer kurz melden,
+                                 prompt = höchstens alle 15 min prüfen, nur bei Stufenwechsel melden
+
+Stufen (Grenzen per MELIOUS_GELB / MELIOUS_ROT, Vorgabe 60 / 85 % des 5-Stunden-Fensters):
+  grün  Claude für den Hauptfaden; Fan-out-Lesen, Zweitmeinung, Review-Gegenprüfung → Melious Flash
+  gelb  alle Sub-Aufgaben über mel-sub (Melious), Claude nur noch für Hauptfaden und Schreibendes
+  rot   auch Recherche und Entwürfe über mel-sub; Konto wechseln (cswap switch), falls eins frei ist
+"""
+import json, os, subprocess, sys, time, shutil
+from pathlib import Path
+
+GELB = float(os.environ.get("MELIOUS_GELB", 60))
+ROT = float(os.environ.get("MELIOUS_ROT", 85))
+STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "melious-plugin" / "last.json"
+HERE = Path(__file__).resolve().parent
+
+
+def claude_usage():
+    if not shutil.which("cswap"):
+        return None, "cswap nicht installiert"
+    try:
+        out = subprocess.run(["cswap", "list", "--json"], capture_output=True, text=True, timeout=20).stdout
+        d = json.loads(out)
+    except Exception as e:  # cswap down or slow: never block the session
+        return None, f"cswap ohne Antwort ({type(e).__name__})"
+    accs = d.get("accounts") or []
+    act = next((a for a in accs if a.get("active")), None)
+    if not act or not act.get("usage"):
+        return None, "aktives Konto ohne Nutzungsdaten"
+    u = act["usage"]
+    frei = [a for a in accs if not a.get("active") and a.get("usage")
+            and (a["usage"].get("fiveHour") or {}).get("pct", 100) < GELB]
+    return {
+        "konto": act.get("alias") or f"Konto {act.get('number')}",
+        "fuenf_h": (u.get("fiveHour") or {}).get("pct"),
+        "fuenf_h_reset": (u.get("fiveHour") or {}).get("clock"),
+        "sieben_t": (u.get("sevenDay") or {}).get("pct"),
+        "vor_plan": bool((u.get("sevenDay") or {}).get("aheadOfPace")),
+        "freie_konten": len(frei),
+    }, None
+
+
+def melious_ready():
+    if os.environ.get("MELIOUS_API_KEY"):
+        return True
+    c = Path.home() / ".melious" / "credentials.json"
+    return c.exists()
+
+
+def stand():
+    u, warum = claude_usage()
+    if u is None:
+        stufe = "unbekannt"
+    else:
+        p = u["fuenf_h"] or 0
+        stufe = "rot" if p >= ROT else "gelb" if (p >= GELB or u["vor_plan"]) else "gruen"
+    rat = {
+        "gruen": "Claude für den Hauptfaden. Fan-out-Lesen, Zweitmeinung und Review-Gegenprüfung über mel-sub (Melious Flash).",
+        "gelb": "Alle Sub-Aufgaben über mel-sub (Melious), auch die, die du sonst als Agent starten würdest. Claude nur für Hauptfaden und Schreibendes.",
+        "rot": "Auch Recherche und Entwürfe über mel-sub. Claude nur noch für Entscheidungen und Commits."
+               + (" Ein anderes Konto hat Luft: cswap switch." if u and u["freie_konten"] else ""),
+        "unbekannt": f"Claude-Auslastung unbekannt ({warum}). Regel: Fan-out-Lesen und Zweitmeinung trotzdem über mel-sub.",
+    }[stufe]
+    return {"stufe": stufe, "claude": u, "melious_bereit": melious_ready(), "empfehlung": rat,
+            "mel_sub": str(HERE / "mel-sub")}
+
+
+def text(s):
+    u = s["claude"]
+    zeile = (f"Claude ({u['konto']}): 5 h {u['fuenf_h']:.0f} % (Reset {u['fuenf_h_reset']}), 7 T {u['sieben_t']:.0f} %"
+             + (", vor Plan" if u["vor_plan"] else "")) if u else "Claude: unbekannt"
+    mel = "Melious bereit" if s["melious_bereit"] else "Melious ohne Schlüssel (melious auth login)"
+    farbe = {"gruen": "grün", "gelb": "gelb", "rot": "rot", "unbekannt": "?"}[s["stufe"]]
+    return (f"[melious] Auslastung {farbe} · {zeile} · {mel}\n"
+            f"[melious] {s['empfehlung']}\n"
+            f"[melious] Sub-Agent auf Melious: {s['mel_sub']} \"Auftrag\"  (-m glm für Hochwertiges, -w erlaubt Schreiben)")
+
+
+def main():
+    a = sys.argv[1:]
+    if os.environ.get("MEL_SUB") == "1":  # inside a Melious sub-agent: stay quiet
+        return
+    if a[:1] == ["--json"]:
+        print(json.dumps(stand(), ensure_ascii=False, indent=1)); return
+    if a[:1] == ["--hook"]:
+        art = a[1] if len(a) > 1 else "start"
+        alt = {}
+        try: alt = json.loads(STATE.read_text())
+        except Exception: pass
+        if art == "prompt" and time.time() - alt.get("t", 0) < 900:
+            return
+        s = stand()
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        STATE.write_text(json.dumps({"t": time.time(), "stufe": s["stufe"]}))
+        if art == "start" or s["stufe"] != alt.get("stufe"):
+            print(text(s))
+        return
+    print(text(stand()))
+
+
+if __name__ == "__main__":
+    main()
