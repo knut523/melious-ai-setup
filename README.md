@@ -25,10 +25,10 @@ spending your Claude limits, and steers the load between the two. Built for the 
 
 **1. Add the plugin.** In Claude Code, say:
 
-> Installiere das Melious-Plugin von github.com/WirStrom1/melious-claude-plugin
+> Installiere das Melious-Plugin von github.com/knut523/melious-ai-setup
 
 Claude adds the marketplace and installs the plugin, then asks you to restart Claude Code once.
-(Doing it by hand instead: `/plugin` → *Add marketplace* → `WirStrom1/melious-claude-plugin` → install `melious`.)
+(Doing it by hand instead: `/plugin` → *Add marketplace* → `knut523/melious-ai-setup` → install `melious`.)
 
 **2. Set it up.** After the restart the plugin notices it is not set up yet and offers to do it — just say **ja**
 (or type `/melious:einrichten`). Claude then:
