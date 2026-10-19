@@ -4,7 +4,7 @@ Lets Claude Code hand its sub-tasks to **Melious** (EU-hosted models: `glm-5.3-f
 spending your Claude limits, and steers the load between the two. Built for the MAXENERGY / OLAF team.
 
 - **`mel-sub "task"`** runs a sub-agent on Melious through **[jcode](https://github.com/1jehuang/jcode)**, which is
-  light on memory and tokens. It is read-only by default (`-w` allows edits) and uses Flash by default (`-m glm` for
+  light on memory and tokens. It is read-only by default (`-w` allows edits) and can load your Claude Code skills (mel-setup links `~/.claude/skills` into `~/.jcode/skills`, because jcode does not read that folder itself) and uses Flash by default (`-m glm` for
   judgement calls). `-p` sends a plain prompt without an agent (cheapest). `-c` uses Claude Code against Melious, but
   only as a fallback if jcode is missing.
 - **Load line at session start:** reads your Claude usage via [cswap](https://pypi.org/project/claude-swap/) (5-hour

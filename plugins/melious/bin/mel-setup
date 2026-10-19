@@ -62,6 +62,13 @@ for c in mel-sub mel-last mel-key mel-setup; do ln -sf "$HERE/$c" ~/.local/bin/$
 [ -x ~/.melious/bin/melious ] && ln -sf ~/.melious/bin/melious ~/.local/bin/melious
 ok "mel-sub, mel-last, mel-key, mel-setup, melious in ~/.local/bin"
 
+step "4b Skills für jcode"
+# jcode liest ~/.jcode/skills, Claude-Plugins und das .claude/skills des Projekts — nicht ~/.claude/skills.
+# Deshalb je persönlichem Claude-Skill ein Verweis; vorhandene Namen bleiben unangetastet.
+mkdir -p ~/.jcode/skills; n=0
+for d in ~/.claude/skills/*/; do [ -d "$d" ] || continue; s=$(basename "$d"); [ -e ~/.jcode/skills/"$s" ] || { ln -s "${d%/}" ~/.jcode/skills/"$s"; n=$((n+1)); }; done
+ok "$n Claude-Skills für jcode verlinkt (gesamt $(ls ~/.jcode/skills 2>/dev/null | wc -l))"
+
 step "5/6 Melious-Schlüssel"
 if key_ok; then ok "vorhanden"
 elif [ -x "$MEL" ]; then

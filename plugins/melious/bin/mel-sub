@@ -3,7 +3,7 @@
 #   mel-sub [-m flash|glm|<modell>] [-C ordner] [-o datei] [-w] [-p | -c] "Auftrag"     (Auftrag auch auf stdin)
 #   -m  Modell: flash = glm-5.3-flash (Vorgabe), glm = glm-5.3 (hochwertig)
 #   -C  Arbeitsordner (Vorgabe: aktueller)       -o  Antwort in Datei statt auf stdout
-#   -w  Schreiben erlauben; ohne -w nur Lesen (read, agentgrep, bash)
+#   -w  Schreiben erlauben; ohne -w nur Lesen (read, agentgrep, bash, skill_manage = Skills laden)
 #   -p  nur Prompt, kein Agent (melious run; am billigsten, für Texte/Zusammenfassungen; Dateien per -f nach dem Auftrag)
 #   -c  Agent über Claude Code statt jcode (schwerer: ~300 MB je Lauf und mehr Tokens; nur wenn jcode fehlt
 #       oder Claude-Skills gebraucht werden)
@@ -36,7 +36,7 @@ case $MODE in
     command -v melious >/dev/null || PATH="$HOME/.melious/bin:$PATH"
     R="$(cd "$C" && MELIOUS_API_KEY="$K" melious run --raw --no-stream --quiet --model "$M" "$A" "$@" < /dev/null 2>&1 | grep -vE "Update available|melious update")"; rc=$? ;;
   jcode)
-    T=read,agentgrep,bash; [ "$W" = 1 ] && T='*'
+    T=read,agentgrep,bash,skill_manage; [ "$W" = 1 ] && T='*'
     J="$(cd "$C" && JCODE_PROVIDER_MELIOUS_API_KEY="$K" timeout "${MEL_SUB_TIMEOUT:-1500}" \
          "$JC" --provider-profile melious --model "$M" --tools "$T" run --json \
          "$A$([ "$W" = 1 ] || printf '\n\n(Nur lesen: nichts ändern, nichts installieren, keine Repo-Skripte ausführen.)')" < /dev/null 2>/dev/null)"; rc=$?
