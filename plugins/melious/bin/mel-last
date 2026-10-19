@@ -74,7 +74,7 @@ def text(s):
     u = s["claude"]
     zeile = (f"Claude ({u['konto']}): 5 h {u['fuenf_h']:.0f} % (Reset {u['fuenf_h_reset']}), 7 T {u['sieben_t']:.0f} %"
              + (", vor Plan" if u["vor_plan"] else "")) if u else "Claude: unbekannt"
-    mel = "Melious bereit" if s["melious_bereit"] else "Melious ohne Schlüssel (melious auth login)"
+    mel = "Melious bereit" if s["melious_bereit"] else "Melious ohne Schlüssel"
     farbe = {"gruen": "grün", "gelb": "gelb", "rot": "rot", "unbekannt": "?"}[s["stufe"]]
     return (f"[melious] Auslastung {farbe} · {zeile} · {mel}\n"
             f"[melious] {s['empfehlung']}\n"
@@ -97,6 +97,12 @@ def main():
         s = stand()
         STATE.parent.mkdir(parents=True, exist_ok=True)
         STATE.write_text(json.dumps({"t": time.time(), "stufe": s["stufe"]}))
+        eingerichtet = subprocess.run([str(HERE / "mel-setup"), "--check"], capture_output=True).returncode == 0
+        if art == "start" and not eingerichtet:
+            print(f"[melious] Das Melious-Plugin ist installiert, aber noch nicht eingerichtet. Biete der Person in einem Satz an, es jetzt "
+                  f"einzurichten; bei Ja führe {HERE / 'mel-setup'} aus (installiert Melious-CLI und jcode, öffnet für den Schlüssel ein "
+                  f"Formular mit Link — den Link der Person zeigen, nie nach dem Schlüssel im Chat fragen). Bis dahin Sub-Aufgaben normal ausführen.")
+            return
         if art == "start" or s["stufe"] != alt.get("stufe"):
             print(text(s))
         return

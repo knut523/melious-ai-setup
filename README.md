@@ -19,30 +19,31 @@ spending your Claude limits, and steers the load between the two. Built for the 
   It is re-checked at most every 15 minutes and repeated only when the level changes.
 - **Skill `melious`:** when and how Claude delegates, and the rule that Melious output is a candidate that has to be
   checked against the code.
-- **Commands:** `/melious:auslastung` shows the load and the recommendation, `/melious:sub <task>` hands off a task.
+- **Commands:** `/melious:auslastung` shows the load and the recommendation, `/melious:sub <task>` hands off a task, `/melious:einrichten` sets everything up.
 
-## Install (once per machine, ~5 minutes)
+## Install — no commands to copy
 
-```bash
-# 1. Melious CLI + your own key (hidden prompt, stored in ~/.melious/credentials.json, mode 600)
-curl -fsSL https://cdn.melious.ai/install.sh | bash        # https://melious.ai/docs/cli
-melious auth login
+**1. Add the plugin.** In Claude Code, say:
 
-# 2. jcode — the light agent mel-sub runs on (https://github.com/1jehuang/jcode, MIT)
-curl -fsSL https://jcode.sh/install | bash                  # https://jcode.sh/docs
+> Installiere das Melious-Plugin von github.com/WirStrom1/melious-claude-plugin
 
-# 3. Optional: cswap for the Claude load line (and account switching)
-uv tool install claude-swap
+Claude adds the marketplace and installs the plugin, then asks you to restart Claude Code once.
+(Doing it by hand instead: `/plugin` → *Add marketplace* → `WirStrom1/melious-claude-plugin` → install `melious`.)
 
-# 4. The plugin (replace <org> with the GitHub org this repo lives in)
-claude plugin marketplace add <org>/melious-claude-plugin
-claude plugin install melious@maxenergy-melious
+**2. Set it up.** After the restart the plugin notices it is not set up yet and offers to do it — just say **ja**
+(or type `/melious:einrichten`). Claude then:
 
-# 5. Check and wire jcode to Melious (adds a [providers.melious] profile to ~/.jcode/config.toml if missing)
-~/.claude/plugins/marketplaces/maxenergy-melious/plugins/melious/bin/mel-setup
-```
+- downloads the Melious CLI and jcode itself (direct downloads, no `curl | bash`; jcode's own installer verifies its
+  checksum, telemetry off),
+- wires jcode to Melious and puts `mel-sub`, `mel-last`, `mel-key` and `melious` into `~/.local/bin`,
+- shows you **one link** to a small form in your own workspace: paste your Melious key there and click *Speichern*.
+  The key is checked against the API and stored in `~/.melious/credentials.json` (mode 600). It never goes through
+  the chat, a command line or a log.
 
-`mel-setup` prints ✓/✗ for the Melious CLI, the key, jcode and its Melious profile, and cswap. It never writes a key.
+You get your personal key from Knut as a one-time Vaultwarden Send link. That is all — about two minutes.
+
+`mel-setup --check` exits 0 when everything is in place; running `mel-setup` again repairs what is missing
+(including jcode profiles from older versions of this plugin).
 
 ## Use
 
@@ -64,7 +65,7 @@ Thresholds: `MELIOUS_GELB` (default 60) and `MELIOUS_ROT` (default 85), percent 
 ## Rules
 
 - **Your own key per person.** Ask Knut; it arrives as a one-time Vaultwarden Send link. Never paste it into a chat,
-  a command line or a file — `melious auth login` reads it from a hidden prompt.
+  a command line or a file — the setup form (`mel-key`) takes it and hands it to `melious auth login --stdin`.
 - Melious output is a **candidate**, not a verdict: verify claims against the code before repeating or posting them.
 - Personal or customer data goes to Melious only pseudonymised and only with an explicit ok.
 
@@ -74,10 +75,10 @@ Thresholds: `MELIOUS_GELB` (default 60) and `MELIOUS_ROT` (default 85), percent 
 .claude-plugin/marketplace.json        marketplace "maxenergy-melious"
 plugins/melious/
   .claude-plugin/plugin.json
-  bin/mel-sub  bin/mel-last  bin/mel-setup
+  bin/mel-sub  bin/mel-last  bin/mel-setup  bin/mel-key
   hooks/hooks.json                     SessionStart + UserPromptSubmit → mel-last --hook
   skills/melious/SKILL.md
-  commands/auslastung.md  commands/sub.md
+  commands/auslastung.md  commands/sub.md  commands/einrichten.md
 ```
 
 ## License

@@ -1,6 +1,6 @@
 {
   "name": "melious",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Sub-agents on Melious (glm-5.3-flash / glm-5.3) plus load steering between Claude limits and Melious.",
   "author": { "name": "MAXENERGY" }
 }

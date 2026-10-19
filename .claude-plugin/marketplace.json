@@ -9,7 +9,7 @@
       "name": "melious",
       "source": "./plugins/melious",
       "description": "Run sub-tasks on Melious (EU models) instead of Claude, and steer load between Claude limits (via cswap) and Melious.",
-      "version": "0.1.0"
+      "version": "0.2.0"
     }
   ]
 }

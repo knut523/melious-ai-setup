@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""mel-key — Melious-Schlüssel per Browser-Formular eintragen statt im Terminal.
+
+Startet ein kleines Formular nur auf 127.0.0.1 (in Coder erreichbar über den Port-Link der eigenen Umgebung),
+nimmt den Schlüssel einmal entgegen, gibt ihn per stdin an `melious auth login --stdin` (prüft ihn gegen die API,
+speichert ~/.melious/credentials.json mit Rechten 600) und beendet sich danach. Der Schlüssel landet nie auf einer
+Kommandozeile, in einem Log oder im Chat.   mel-key [--port 8097] [--timeout 900]
+"""
+import html, os, shutil, subprocess, sys, threading, urllib.parse
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+args = sys.argv[1:]
+PORT = int(args[args.index("--port") + 1]) if "--port" in args else int(os.environ.get("MEL_KEY_PORT", 8097))
+TIMEOUT = int(args[args.index("--timeout") + 1]) if "--timeout" in args else 900
+MEL = shutil.which("melious") or os.path.expanduser("~/.melious/bin/melious")
+
+def link(port):
+    ws, owner, agent = (os.environ.get(k) for k in ("CODER_WORKSPACE_NAME", "CODER_WORKSPACE_OWNER_NAME", "CODER_WORKSPACE_AGENT_NAME"))
+    dom = os.environ.get("MEL_CODER_DOMAIN", "ws.konekto.energy")
+    return f"https://{port}--{agent or 'main'}--{ws}--{owner}.{dom}" if ws and owner else f"http://127.0.0.1:{port}"
+
+PAGE = """<!doctype html><html lang=de><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Melious einrichten</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:520px;margin:48px auto;padding:0 16px;color:#222;background:#f7f6f3}
+h1{font-size:22px}input{width:100%;font:16px monospace;padding:10px;border:1px solid #bbb;border-radius:8px;box-sizing:border-box}
+button{margin-top:12px;font:600 16px system-ui;padding:10px 18px;border:0;border-radius:8px;background:#c4561d;color:#fff;cursor:pointer}
+.msg{margin-top:16px;padding:12px;border-radius:8px}.ok{background:#e1f1e6}.bad{background:#f8e0de}small{color:#666}</style>
+<h1>Melious-Schlüssel eintragen</h1><p>Füge deinen persönlichen Melious-Schlüssel ein (beginnt mit <code>sk-mel-</code>).
+Du bekommst ihn als Vaultwarden-Send-Link oder unter <a href="https://melious.ai" target=_blank>melious.ai</a> unter „API Keys“.</p>
+<form method=post><input name=key type=password autocomplete=off placeholder="sk-mel-…" autofocus required><button>Speichern</button></form>
+__MSG__<p><small>Der Schlüssel wird geprüft und nur in deiner Umgebung gespeichert (~/.melious/credentials.json). Diese Seite schließt sich danach.</small></p></html>"""
+
+done = threading.Event()
+class H(BaseHTTPRequestHandler):
+    def _page(self, msg=""):
+        b = PAGE.replace("__MSG__", msg).encode(); self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    def do_GET(self): self._page()
+    def do_POST(self):
+        n = min(int(self.headers.get("Content-Length", "0")), 4000)
+        key = urllib.parse.parse_qs(self.rfile.read(n).decode()).get("key", [""])[0].strip()
+        if not key.startswith("sk-mel-"):
+            return self._page('<div class="msg bad">Das sieht nicht nach einem Melious-Schlüssel aus (sk-mel-…).</div>')
+        p = subprocess.run([MEL, "auth", "login", "--stdin"], input=key + "\n", capture_output=True, text=True, timeout=60)
+        if p.returncode == 0:
+            self._page('<div class="msg ok">✓ Gespeichert und geprüft. Du kannst dieses Fenster schließen und in Claude weitermachen.</div>')
+            print("mel-key: Schlüssel gespeichert ✓", flush=True); done.set()
+        else:
+            err = html.escape((p.stderr or p.stdout).strip().splitlines()[-1] if (p.stderr or p.stdout).strip() else "unbekannter Fehler")
+            self._page(f'<div class="msg bad">Nicht gespeichert: {err}. Bitte Schlüssel prüfen und erneut versuchen.</div>')
+    def log_message(self, *a): pass
+
+if not os.path.exists(MEL): sys.exit("mel-key: Melious-CLI fehlt — zuerst mel-setup")
+srv = HTTPServer(("127.0.0.1", PORT), H)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+print(f"mel-key: Formular offen → {link(PORT)}  (schließt sich nach dem Speichern, spätestens in {TIMEOUT // 60} min)", flush=True)
+done.wait(TIMEOUT); srv.shutdown()
+sys.exit(0 if done.is_set() else 1)

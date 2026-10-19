@@ -1,23 +1,49 @@
 #!/usr/bin/env bash
-# mel-setup — einmal je Rechner: prüft Melious-CLI und Schlüssel, richtet das Melious-Profil in jcode ein, prüft cswap.
-# Ändert nur ~/.jcode/config.toml (hängt [providers.melious] an, wenn es fehlt). Schreibt nie einen Schlüssel.
+# mel-setup — richtet alles ein, was das Melious-Plugin braucht, ohne dass jemand Befehle kopieren muss.
+# Claude ruft es auf, wenn man sagt „richte Melious ein“ (oder wenn der Start-Hook „nicht eingerichtet“ meldet).
+#   1. Melious-CLI   → ~/.melious/bin/melious (direkter Download der Programmdatei)
+#   2. jcode         → ~/.local/bin/jcode (offizieller Installer, erst in eine Datei geladen, Prüfsumme prüft er selbst, ohne Telemetrie)
+#   3. jcode-Profil  → [providers.melious] in ~/.jcode/config.toml, falls es fehlt
+#   4. Befehle       → mel-sub, mel-last, mel-key, melious als Verweise in ~/.local/bin
+#   5. Schlüssel     → fehlt er, öffnet mel-key ein Formular (Link anklicken, Schlüssel einfügen) — nie im Terminal oder Chat
+#   6. cswap         → optional, nur wenn uv da ist (Claude-Auslastung)
+#   mel-setup --check   nur prüfen (Exit 0 = fertig eingerichtet), nichts installieren
 set -uo pipefail
-ok() { printf '  ✓ %s\n' "$*"; }; no() { printf '  ✗ %s\n' "$*"; }
-M="$(command -v melious || echo "$HOME/.melious/bin/melious")"
-[ -x "$M" ] && ok "Melious-CLI: $M" || no "Melious-CLI fehlt → https://melious.ai/docs/cli"
-if [ -n "${MELIOUS_API_KEY:-}" ] || [ -f ~/.melious/credentials.json ]; then ok "Melious-Schlüssel vorhanden"
-else no "kein Schlüssel → melious auth login"; fi
-J="$(command -v jcode || echo "$HOME/.local/bin/jcode")"
-if [ -x "$J" ]; then
-  ok "jcode: $("$J" --version 2>/dev/null | head -1)"
-  mkdir -p ~/.jcode; touch ~/.jcode/config.toml
-  if grep -q '^\[providers\.melious\]' ~/.jcode/config.toml; then ok "jcode-Profil melious vorhanden"
-  else cat >> ~/.jcode/config.toml <<'EOF'
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+ok() { printf '  ✓ %s\n' "$*"; }; no() { printf '  ✗ %s\n' "$*"; }; step() { printf '\n%s\n' "$*"; }
+MEL="$(command -v melious || echo "$HOME/.melious/bin/melious")"; J="$(command -v jcode || echo "$HOME/.local/bin/jcode")"
+key_ok() { [ -n "${MELIOUS_API_KEY:-}" ] || [ -s ~/.melious/credentials.json ]; }
+prof_ok() { awk '/^\[providers\.melious\]/{f=1;next} /^\[/{f=0} f&&/^api_key_env *=/{ok=1} END{exit !ok}' ~/.jcode/config.toml 2>/dev/null; }
+if [ "${1:-}" = --check ]; then [ -x "$MEL" ] && [ -x "$J" ] && prof_ok && key_ok; exit; fi
+case "$(uname -s)-$(uname -m)" in
+  Linux-x86_64) P=linux_amd64;; Linux-aarch64) P=linux_arm64;; Darwin-arm64) P=darwin_arm64;; Darwin-x86_64) P=darwin_amd64;;
+  *) no "Plattform $(uname -s)/$(uname -m) wird nicht unterstützt"; exit 1;; esac
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+
+step "1/6 Melious-CLI"
+if [ -x "$MEL" ]; then ok "vorhanden: $("$MEL" --version 2>/dev/null | head -1)"
+else mkdir -p ~/.melious/bin && curl -fsSL --retry 2 "https://cdn.melious.ai/cli/latest/$P/melious" -o "$T/melious" \
+  && install -m 755 "$T/melious" ~/.melious/bin/melious && MEL=~/.melious/bin/melious && ok "installiert: $("$MEL" --version 2>/dev/null | head -1)" \
+  || no "Download fehlgeschlagen (cdn.melious.ai erreichbar?)"; fi
+
+step "2/6 jcode (leichter Agent für mel-sub)"
+if [ -x "$J" ]; then ok "vorhanden: $("$J" --version 2>/dev/null | head -1)"
+else curl -fsSL --retry 2 https://jcode.sh/install -o "$T/jcode-install.sh" \
+  && JCODE_NO_TELEMETRY=1 bash "$T/jcode-install.sh" > "$T/jcode.log" 2>&1 && J="$HOME/.local/bin/jcode" && [ -x "$J" ] \
+  && ok "installiert: $("$J" --version 2>/dev/null | head -1)" || { no "jcode-Installation fehlgeschlagen — mel-sub nutzt dann Claude Code (schwerer)"; tail -3 "$T/jcode.log" 2>/dev/null; }; fi
+
+step "3/6 jcode-Profil für Melious"
+if prof_ok; then ok "vorhanden"
+elif grep -q '^\[providers\.melious\]' ~/.jcode/config.toml 2>/dev/null; then   # Profil aus einer älteren Fassung: Schlüssel-Variable fehlt
+  sed -i '/^\[providers\.melious\]/a api_key_env = "JCODE_PROVIDER_MELIOUS_API_KEY"\nrequires_api_key = true' ~/.jcode/config.toml && ok "nachgebessert (api_key_env)"
+else mkdir -p ~/.jcode && cat >> ~/.jcode/config.toml <<'EOF'
 
 [providers.melious]
 type = "open-ai-compatible"
 base_url = "https://api.melious.ai/v1"
 auth = "bearer"
+api_key_env = "JCODE_PROVIDER_MELIOUS_API_KEY"
+requires_api_key = true
 default_model = "glm-5.3-flash"
 provider_routing = false
 model_catalog = false
@@ -28,6 +54,24 @@ id = "glm-5.3-flash"
 [[providers.melious.models]]
 id = "glm-5.3"
 EOF
-  ok "jcode-Profil melious angelegt"; fi
-else no "jcode fehlt (mel-sub nimmt dann Claude Code, schwerer) → jcode installieren, dann mel-setup erneut"; fi
-command -v cswap >/dev/null && ok "cswap: Claude-Auslastung verfügbar" || no "cswap fehlt (optional) → uv tool install claude-swap"
+ok "angelegt"; fi
+
+step "4/6 Befehle"
+mkdir -p ~/.local/bin
+for c in mel-sub mel-last mel-key mel-setup; do ln -sf "$HERE/$c" ~/.local/bin/$c; done
+[ -x ~/.melious/bin/melious ] && ln -sf ~/.melious/bin/melious ~/.local/bin/melious
+ok "mel-sub, mel-last, mel-key, mel-setup, melious in ~/.local/bin"
+
+step "5/6 Melious-Schlüssel"
+if key_ok; then ok "vorhanden"
+elif [ -x "$MEL" ]; then
+  echo "  → Öffne den Link unten, füge deinen Schlüssel ein und klicke „Speichern“. Ich warte hier (bis 15 min)."
+  "$HERE/mel-key" && ok "gespeichert und geprüft" || no "kein Schlüssel eingetragen — später nochmal: mel-setup"
+fi
+
+step "6/6 cswap (optional, Claude-Auslastung)"
+if command -v cswap >/dev/null; then ok "vorhanden"
+elif command -v uv >/dev/null; then uv tool install -q claude-swap >/dev/null 2>&1 && ok "installiert" || no "Installation fehlgeschlagen (optional)"
+else no "übersprungen (uv fehlt) — die Auslastungszeile zeigt dann „unbekannt“, alles andere geht"; fi
+
+echo; if "$0" --check; then echo "Fertig ✓  Melious ist eingerichtet. Probe: mel-sub -p \"Sag Hallo\""; else echo "Noch nicht vollständig — siehe ✗ oben."; exit 1; fi
